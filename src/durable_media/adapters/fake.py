@@ -1,0 +1,13 @@
+from typing import Protocol
+class Publisher(Protocol):
+ def validate_target(self,target): ...
+ def upload(self,remote,file_path): ...
+ def publish(self,remote,job): ...
+ def verify(self,result): ...
+class FakePublisher:
+ def __init__(self,mode='success'): self.mode=mode; self.uploads=0
+ def publish_job(self,job,path):
+  self.uploads+=1
+  if self.mode in ('timeout','rate_limit'): raise RuntimeError(self.mode)
+  if self.mode in ('auth','validation','malformed','unknown'): raise ValueError(self.mode)
+  return {'external_id':'fake-'+job['job_id'],'url':'https://fake.invalid/'+job['job_id'],'verified':True}
