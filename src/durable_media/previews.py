@@ -1,12 +1,28 @@
-"""Generate registered, workspace-confined preview artifacts."""
+"""Generate registered, workspace-confined preview artifacts.
+
+Produces poster frame thumbnails and 3x3 tiled contact sheets with atomic file
+replacement and robust fallback strategies for sub-second and single-frame clips.
+"""
 import os
 from pathlib import Path
+from typing import Any
 
+from .config import WorkspaceConfig
 from .derivatives import register_artifact
 from .media_tools import run_ffmpeg
+from .registry import Registry
 
 
-def _make(cfg, registry, parent, path, kind, args, fallback_args=None):
+def _make(
+    cfg: WorkspaceConfig,
+    registry: Registry,
+    parent: str,
+    path: Path | str,
+    kind: str,
+    args: list[str],
+    fallback_args: list[str] | None = None,
+) -> dict[str, Any]:
+    """Execute preview generation with atomic swap and optional command fallback."""
     dest = cfg.safe(cfg.root / path)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name('.tmp-' + dest.stem + dest.suffix)
@@ -38,7 +54,8 @@ def _make(cfg, registry, parent, path, kind, args, fallback_args=None):
         tmp.unlink(missing_ok=True)
 
 
-def thumbnail(cfg, registry, parent):
+def thumbnail(cfg: WorkspaceConfig, registry: Registry, parent: str) -> dict[str, Any]:
+    """Extract a 640px-wide poster frame thumbnail from the first frame of a derivative."""
     row = registry.derivative(parent)
     src = cfg.safe(cfg.root / row['path'])
     # Seeking to t=0 is valid even for a sub-second stream; -ss 1 is not.
@@ -52,7 +69,8 @@ def thumbnail(cfg, registry, parent):
     )
 
 
-def contact_sheet(cfg, registry, parent):
+def contact_sheet(cfg: WorkspaceConfig, registry: Registry, parent: str) -> dict[str, Any]:
+    """Generate a 3x3 contact sheet sampled at 0.2 fps with single-frame fallback."""
     row = registry.derivative(parent)
     src = cfg.safe(cfg.root / row['path'])
     # Select the first decoded frame explicitly.  Unlike fps=1/5, this cannot

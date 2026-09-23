@@ -1,7 +1,19 @@
+"""LinkedIn Community Management and Posts API adapter.
+
+Supports multiple content flows:
+- text_only: direct commentary post without attached media.
+- image: initializes upload via rest/images?action=initializeUpload.
+- video: initializes upload via rest/videos?action=initializeUpload and polls
+  video readiness until status is AVAILABLE.
+- audio rejection: explicitly rejects standalone audio files as unsupported on LinkedIn.
+
+Enforces strict author URN formatting ('urn:li:person:<id>' or 'urn:li:organization:<id>')
+and Restli 2.0.0 protocol version headers.
+"""
 from __future__ import annotations
 
-import re
 from pathlib import Path
+import re
 from typing import Any
 
 from .base import (
@@ -31,6 +43,7 @@ class LinkedInPublisher(BasePublisher):
     ):
         self.config = config or LinkedInConfig()
         self.transport = transport or FakeHttpTransport()
+
 
     def validate_target(self, target: Any) -> dict[str, Any]:
         author_urn = target or self.config.author_urn

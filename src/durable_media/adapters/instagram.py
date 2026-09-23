@@ -1,3 +1,13 @@
+"""Instagram Graph API adapter for Reels publishing and media container lifecycle.
+
+Implements the multi-stage Meta Graph API container workflow:
+1. Container Initialization: POST /{ig_user_id}/media with upload_type=resumable.
+2. Binary Upload: POST upload_uri with X-Entity-Length and offset headers.
+3. Status Polling: GET /{container_id} until status_code becomes FINISHED.
+4. Publication: POST /{ig_user_id}/media_publish with creation_id.
+5. Verification: GET /{media_id} to retrieve permalink and external ID.
+6. Container Rollback: DELETE /{container_id} if processing fails prior to publish.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,6 +35,7 @@ class InstagramPublisher(BasePublisher):
     ):
         self.config = config or InstagramConfig()
         self.transport = transport or FakeHttpTransport()
+
 
     def validate_target(self, target: Any) -> dict[str, Any]:
         account_id = target or self.config.account_id

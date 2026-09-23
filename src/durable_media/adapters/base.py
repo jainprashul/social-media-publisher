@@ -1,67 +1,136 @@
+"""Base publishing adapter interfaces, error taxonomy, and lifecycle protocol.
+
+Defines the canonical 7-step publishing lifecycle:
+1. validate_target: preflight validation of target account/channel/URN.
+2. create_upload: initialization of media container or resumable session.
+3. upload: streaming/chunked transmission of media bytes.
+4. wait_until_ready: polling remote transcoding/processing completion.
+5. publish: final post publication or container delivery.
+6. verify: independent read-back of published permalink and external ID.
+7. rollback_or_cleanup: best-effort cleanup of partial remote state on error.
+
+Also defines the standardized error hierarchy with error_class attributes used
+by the retry classifier and scheduler.
+"""
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+import os
+from typing import Any, Protocol, runtime_checkable
+
 
 class AdapterError(RuntimeError):
+    """Base error for all provider adapter operations."""
     error_class = 'adapter_error'
-class TimeoutError(AdapterError): error_class='timeout'
-class RateLimitError(AdapterError): error_class='rate_limit'
-class ServerError(AdapterError): error_class='5xx'
-class AuthenticationError(AdapterError): error_class='authentication'
-class ValidationError(AdapterError): error_class='validation'
-class MalformedResponseError(AdapterError): error_class='malformed_response'
-class UnknownRemoteStateError(AdapterError): error_class='unknown_remote'
-class LiveChecksDisabledError(AdapterError): error_class='live_checks_disabled'
+
+
+class TimeoutError(AdapterError):
+    """Network connection, read, or polling timeout."""
+    error_class = 'timeout'
+
+
+class RateLimitError(AdapterError):
+    """Provider rate limit or quota exceeded (HTTP 429)."""
+    error_class = 'rate_limit'
+
+
+class ServerError(AdapterError):
+    """Provider internal server error (HTTP 5xx)."""
+    error_class = '5xx'
+
+
+class AuthenticationError(AdapterError):
+    """Invalid, expired, or missing credentials/tokens (HTTP 401/403)."""
+    error_class = 'authentication'
+
+
+class ValidationError(AdapterError):
+    """Malformed request payload, invalid destination, or rejected media format."""
+    error_class = 'validation'
+
+
+class MalformedResponseError(AdapterError):
+    """Provider response missing expected fields or returned unparseable payload."""
+    error_class = 'malformed_response'
+
+
+class UnknownRemoteStateError(AdapterError):
+    """Network dropped mid-flight; remote publication status is ambiguous."""
+    error_class = 'unknown_remote'
+
+
+class LiveChecksDisabledError(AdapterError):
+    """Raised when live network checks are attempted without opt-in flag."""
+    error_class = 'live_checks_disabled'
+
 
 def is_live_allowed() -> bool:
-    import os
+    """Check whether external live network calls are enabled via environment variable.
+
+    Guards against accidental live calls or token consumption during dry-runs/tests.
+    Requires DURABLE_MEDIA_ALLOW_LIVE_CHECKS=1 (or 'true', 'yes').
+    """
     val = os.environ.get("DURABLE_MEDIA_ALLOW_LIVE_CHECKS", "").strip().lower()
     return val in ("1", "true", "yes")
 
 
 @dataclass(frozen=True)
 class AdapterResult:
+    """Immutable result from a verified adapter publication."""
+
     external_id: str
     url: str
     verified: bool = True
     payload: dict | None = None
 
-    def __getitem__(self, key: str):
-        if key == 'external_id': return self.external_id
-        if key == 'url': return self.url
-        if key == 'verified': return self.verified
-        if key == 'payload': return self.payload
-        if self.payload and key in self.payload: return self.payload[key]
+    def __getitem__(self, key: str) -> Any:
+        if key == 'external_id':
+            return self.external_id
+        if key == 'url':
+            return self.url
+        if key == 'verified':
+            return self.verified
+        if key == 'payload':
+            return self.payload
+        if self.payload and key in self.payload:
+            return self.payload[key]
         raise KeyError(key)
 
-    def get(self, key: str, default=None):
+    def get(self, key: str, default: Any = None) -> Any:
         try:
             return self[key]
         except KeyError:
             return default
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
+        """Convert result to flat dictionary for receipt serialization."""
         base = {'external_id': self.external_id, 'url': self.url, 'verified': self.verified}
         if self.payload:
             base.update(self.payload)
         return base
 
-    def __redact__(self):
+    def __redact__(self) -> dict[str, Any]:
+        """Security boundary: redact any tokens or secrets present in response payload."""
         from ..security import redact
         return {'external_id': self.external_id, 'url': self.url, 'verified': self.verified, 'payload': redact(self.payload)}
 
+
 @runtime_checkable
 class Publisher(Protocol):
-    def validate_target(self, target): ...
-    def create_upload(self, job): ...
-    def upload(self, remote, file_path): ...
-    def wait_until_ready(self, remote): ...
-    def publish(self, remote, job): ...
-    def verify(self, result): ...
-    def rollback_or_cleanup(self, remote): ...
-    def publish_job(self, job, file_path): ...
+    """Structural protocol defining the publisher interface."""
+
+    def validate_target(self, target: Any) -> Any: ...
+    def create_upload(self, job: dict[str, Any]) -> Any: ...
+    def upload(self, remote: Any, file_path: str) -> Any: ...
+    def wait_until_ready(self, remote: Any) -> Any: ...
+    def publish(self, remote: Any, job: dict[str, Any]) -> Any: ...
+    def verify(self, result: Any) -> Any: ...
+    def rollback_or_cleanup(self, remote: Any) -> None: ...
+    def publish_job(self, job: dict[str, Any], file_path: str) -> dict[str, Any]: ...
+    def check_readiness(self, live: bool = False, timeout: float = 5.0) -> dict[str, Any]: ...
+
 
 class BasePublisher:
-    """Base publisher implementing the 7-step publishing lifecycle."""
+    """Base publisher implementing the 7-step publishing lifecycle template."""
+
     def validate_target(self, target):
         raise NotImplementedError
 

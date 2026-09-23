@@ -1,3 +1,9 @@
+"""Discord publisher adapter supporting bot tokens and incoming webhooks.
+
+Implements message and file attachment delivery with explicit ephemeral retention
+semantics (Discord messages and attachments are subject to server retention limits
+and do not constitute permanent asset storage). Supports message deletion rollback.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,6 +22,7 @@ from ..security import redact
 
 class DiscordPublisher(BasePublisher):
     """Discord API adapter for file and message publishing with explicit ephemeral retention semantics."""
+
 
     def __init__(
         self,

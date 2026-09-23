@@ -1,3 +1,9 @@
+"""HTTP transport layer, request sanitization, and status code classification.
+
+Provides abstract HttpTransport protocol, deterministic FakeHttpTransport for
+offline testing, header and URL sanitization, and status code mapping to domain
+adapter exceptions (recognizing HTTP 308 Resume Incomplete for chunking).
+"""
 from __future__ import annotations
 
 import json
@@ -20,11 +26,14 @@ from ..security import redact
 
 @dataclass
 class TransportResponse:
+    """Standardized HTTP response envelope across synchronous and mock transports."""
+
     status_code: int
     headers: dict[str, str] = field(default_factory=dict)
     text: str = ""
     content: bytes = b""
     json_body: Any = None
+
 
     def __post_init__(self):
         # Normalize header keys to lowercase for case-insensitive lookup

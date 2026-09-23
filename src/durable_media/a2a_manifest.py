@@ -1,9 +1,19 @@
-import json, os, re
-from dataclasses import dataclass, field, asdict
-from pathlib import Path
-from typing import Any
-from .security import redact, is_secret_path
+"""Agent-to-Agent (A2A) manifest schema and validation.
 
+Defines the contract for multi-agent media handoffs, capturing task IDs, agent
+provenance, model parameters, prompt hashes, and parent-child asset relationships
+while enforcing strict workspace path containment and rejecting secret files.
+"""
+import json
+import os
+from pathlib import Path
+import re
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+from .security import is_secret_path, redact
+
+# Whitelist of permissible file extensions for ingested A2A media and sidecars
 SUPPORTED_EXTENSIONS = {
     '.png', '.jpg', '.jpeg', '.webp', '.gif',
     '.mp4', '.webm', '.mov', '.m4v',
@@ -11,7 +21,9 @@ SUPPORTED_EXTENSIONS = {
     '.srt', '.vtt', '.txt', '.json'
 }
 
+
 def validate_prompt_hash(h: str | None) -> str | None:
+    """Validate that prompt_hash is a canonical 64-character hex SHA-256 or None."""
     if h is None:
         return None
     if not isinstance(h, str):
@@ -23,15 +35,13 @@ def validate_prompt_hash(h: str | None) -> str | None:
         raise ValueError('malformed prompt_hash: must be 64-character hex sha256')
     return val.lower()
 
-def _check_safe_relative_path(path_str: str, label: str = 'path'):
+
+def _check_safe_relative_path(path_str: str, label: str = 'path') -> str:
+    """Validate path syntax, disallowing traversal ('..'), secrets, and unsupported extensions."""
     if not isinstance(path_str, str) or not path_str.strip():
         raise ValueError(f'{label} is required and must be non-empty')
     cleaned = path_str.strip()
     p = Path(cleaned)
-    if p.is_absolute() and p.as_posix().startswith('/'):
-        # Absolute paths are allowed only if resolved within workspace at ingest time,
-        # but in manifest schema, relative paths are expected; check traversal:
-        pass
     parts = p.parts
     if any(part == '..' for part in parts):
         raise ValueError(f'workspace escape detected in {label}: {cleaned}')
@@ -42,8 +52,11 @@ def _check_safe_relative_path(path_str: str, label: str = 'path'):
         raise ValueError(f'unsupported file extension {ext} in {label}: {cleaned}')
     return cleaned
 
+
 @dataclass
 class A2AArtifact:
+    """Declaration of an individual media asset produced during an agent task."""
+
     path: str
     kind: str | None = None
     role: str = 'master'
@@ -74,10 +87,14 @@ class A2AArtifact:
                 self.kind = 'caption'
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert artifact metadata to dictionary with proactive redaction."""
         return redact(asdict(self))
+
 
 @dataclass
 class A2AManifest:
+    """Structured envelope encapsulating agent-generated assets and lineage."""
+
     task_id: str
     agent: str
     project: str | None = None
@@ -112,6 +129,7 @@ class A2AManifest:
             seen.add(norm)
 
     def to_dict(self) -> dict[str, Any]:
+        """Convert manifest to dictionary with credentials and secrets redacted."""
         d = {
             'task_id': self.task_id,
             'agent': self.agent,
@@ -127,10 +145,12 @@ class A2AManifest:
         return redact(d)
 
     def to_json(self) -> str:
+        """Serialize manifest to deterministic formatted JSON."""
         return json.dumps(self.to_dict(), sort_keys=True, indent=2) + "\n"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> 'A2AManifest':
+        """Parse and validate manifest from dictionary data."""
         if not isinstance(data, dict):
             raise ValueError('manifest data must be a dictionary')
         task_id = data.get('task_id')
@@ -181,6 +201,7 @@ class A2AManifest:
 
     @classmethod
     def loads(cls, content: str) -> 'A2AManifest':
+        """Parse and validate manifest from JSON string."""
         try:
             parsed = json.loads(content)
         except json.JSONDecodeError as exc:
@@ -189,6 +210,7 @@ class A2AManifest:
 
     @classmethod
     def load(cls, path: str | Path) -> 'A2AManifest':
+        """Load and validate manifest from filesystem path."""
         p = Path(path).expanduser().resolve()
         if not p.is_file():
             raise ValueError(f'manifest file not found: {path}')

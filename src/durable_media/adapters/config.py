@@ -1,3 +1,9 @@
+"""Platform adapter configuration and secret reference management.
+
+Manages credentials through SecretRef objects that isolate secret resolution
+from serialization, preventing tokens from leaking into logs, terminal output,
+or audit manifests. Defines platform-specific endpoint and timeout configurations.
+"""
 from __future__ import annotations
 
 import os
@@ -9,7 +15,12 @@ from .base import AuthenticationError
 
 
 class SecretRef:
-    """Reference to a secret (environment variable or file), never serializing the raw value."""
+    """Secure reference to a secret stored in an environment variable or file.
+
+    Guarantees that raw secret values are never exposed through repr(), str(),
+    custom serialization, or dictionary export. Secrets are only resolved into
+    memory at the moment of HTTP request construction.
+    """
 
     def __init__(
         self,
@@ -23,17 +34,25 @@ class SecretRef:
 
     @classmethod
     def from_env(cls, env_var: str) -> SecretRef:
+        """Create reference to an environment variable name."""
         return cls(env=env_var)
 
     @classmethod
     def from_file(cls, path: Path | str) -> SecretRef:
+        """Create reference to a secret file on disk."""
         return cls(file_path=path)
 
     @classmethod
     def from_value(cls, val: str) -> SecretRef:
+        """Create reference to an in-memory secret string (redacted upon repr/str)."""
         return cls(value=val)
 
     def resolve(self) -> str:
+        """Resolve and return the plaintext secret value for HTTP transmission.
+
+        Raises AuthenticationError if the referenced environment variable or file is missing.
+        """
+
         if self._value is not None:
             return self._value
         if self.env:

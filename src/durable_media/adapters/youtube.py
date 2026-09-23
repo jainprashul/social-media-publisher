@@ -1,7 +1,21 @@
+"""YouTube Data API v3 publisher adapter supporting Google resumable chunked uploads.
+
+Implements the official Google resumable upload protocol:
+1. Resumable Session Creation: POST upload/youtube/v3/videos?uploadType=resumable
+   initiates the session and receives a session URL in the HTTP Location header.
+2. Chunked Binary Upload: PUT chunks with Content-Range headers. Handles HTTP 308
+   Resume Incomplete responses and parses Range headers to advance byte offsets.
+3. Resume Inquiry: PUT with 'bytes */total' to recover the exact received byte count
+   following network disconnections.
+4. Video Processing Polling: polls GET youtube/v3/videos until uploadStatus is
+   'processed' or processingStatus is 'succeeded'.
+5. Optional Thumbnail Upload: uploads custom JPEG thumbnails to thumbnails/set.
+6. Verification & Rollback: verifies public watch URL; issues DELETE on aborted jobs.
+"""
 from __future__ import annotations
 
-import re
 from pathlib import Path
+import re
 from typing import Any
 
 from .base import (
@@ -29,6 +43,7 @@ class YouTubePublisher(BasePublisher):
     ):
         self.config = config or YouTubeConfig()
         self.transport = transport or FakeHttpTransport()
+
 
     def validate_target(self, target: Any) -> dict[str, Any]:
         channel_id = target or self.config.channel_id or "default"

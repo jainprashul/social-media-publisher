@@ -1,15 +1,41 @@
-import json, os
+"""Two-pass ingestion of Agent-to-Agent (A2A) manifests and multi-asset packages.
+
+Coordinates atomic preflight validation across all declared media assets,
+captions, and thumbnails prior to database ingestion. Links parent-child asset
+lineage and archives an immutable manifest copy for auditability.
+"""
+import json
+import os
 from pathlib import Path
 from typing import Any
-from .config import WorkspaceConfig
-from .registry import Registry
-from .ingest import ingest
-from .derivatives import register_artifact
-from .captions import register_caption
-from .observability import JsonLogger
-from .a2a_manifest import A2AManifest, SUPPORTED_EXTENSIONS
 
-def ingest_a2a_manifest(cfg: WorkspaceConfig, registry: Registry, manifest_input: Any, project: str | None = None) -> dict[str, Any]:
+from .a2a_manifest import A2AManifest, SUPPORTED_EXTENSIONS
+from .captions import register_caption
+from .config import WorkspaceConfig
+from .derivatives import register_artifact
+from .ingest import ingest
+from .observability import JsonLogger
+from .registry import Registry
+
+
+def ingest_a2a_manifest(
+    cfg: WorkspaceConfig,
+    registry: Registry,
+    manifest_input: Any,
+    project: str | None = None,
+) -> dict[str, Any]:
+    """Ingest a validated A2A manifest into the durable registry.
+
+    Execution Lifecycle:
+    1. Resolve & Parse: loads manifest from Path, JSON string, dict, or instance.
+    2. Pass 1 (Preflight): verifies all declared files (artifacts, captions,
+       thumbnails) exist on disk, are non-empty, safe within workspace, and use
+       supported extensions. If any check fails, ingestion halts before DB mutation.
+    3. Pass 2 (Registration): ingests master assets, registers auxiliary artifacts
+       (captions, thumbnails), links parent-child relationships, and maps IDs.
+    4. Archive & Event: writes an immutable copy to manifests/a2a_{task_id}.json
+       and emits a structured audit record to data/logs/events.jsonl.
+    """
     # Resolve manifest
     if isinstance(manifest_input, (str, Path)):
         p = Path(manifest_input)
@@ -30,6 +56,7 @@ def ingest_a2a_manifest(cfg: WorkspaceConfig, registry: Registry, manifest_input
     effective_project = project or manifest.project
     if not effective_project:
         raise ValueError('project is required in manifest or as parameter')
+
 
     # Pass 1: Validate all artifact files and paths exist and are safe
     validated_files = []
