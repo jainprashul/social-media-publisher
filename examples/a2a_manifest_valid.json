@@ -1,0 +1,29 @@
+{
+  "task_id": "task-a2a-gen-101",
+  "agent": "gemini-video-agent",
+  "project": "launch-campaign",
+  "prompt_hash": "a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0",
+  "context_id": "ctx-session-42",
+  "model": "veo-2",
+  "tool": "a2a_media_generator",
+  "artifacts": [
+    {
+      "path": "projects/launch-campaign/reel.mp4",
+      "kind": "video",
+      "role": "master",
+      "caption_path": "projects/launch-campaign/reel.vtt",
+      "thumbnail_path": "projects/launch-campaign/poster.png",
+      "model": "veo-2",
+      "tool": "a2a_media_generator",
+      "metadata": {
+        "dimensions": "1080x1920",
+        "duration_sec": 15.0
+      }
+    }
+  ],
+  "metadata": {
+    "workflow": "daily_social_reel",
+    "generation_seed": 4242
+  },
+  "created_at": "2026-09-23T04:00:00Z"
+}

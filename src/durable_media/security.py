@@ -9,7 +9,20 @@ def redact(value):
  if isinstance(value,tuple): return tuple(redact(x) for x in value)
  if isinstance(value,str):
   if re.search(r'Bearer\s+\S+',value,re.I): return re.sub(r'Bearer\s+\S+','Bearer [REDACTED]',value,flags=re.I)
-  if re.search(r'([?&](?:token|access_token|code|sig|signature|key)=)[^&]+',value,re.I): return re.sub(r'([?&](?:token|access_token|code|sig|signature|key)=)[^&]+',r'\1[REDACTED]',value,flags=re.I)
+  if re.search(r'([?&](?:token|access_token|code|sig|signature|key|x-amz-signature|x-amz-credential|x-goog-signature|auth)[=])[^&#\s]+',value,re.I):
+   return re.sub(r'([?&](?:token|access_token|code|sig|signature|key|x-amz-signature|x-amz-credential|x-goog-signature|auth)[=])[^&#\s]+',r'\1[REDACTED]',value,flags=re.I)
  return value
+
+SECRET_PATH_NAMES = {'.env', 'id_rsa', 'id_dsa', 'id_ed25519', 'credentials', 'credentials.json', 'secret.key'}
+SECRET_PATH_EXTS = {'.pem', '.key', '.pfx', '.p12'}
+
+def is_secret_path(path):
+ from pathlib import Path
+ p = Path(path)
+ if p.name.lower() in SECRET_PATH_NAMES: return True
+ if p.suffix.lower() in SECRET_PATH_EXTS: return True
+ for part in p.parts:
+  if SECRET.search(part): return True
+ return False
 
 def canonical(value): return json.dumps(redact(value),sort_keys=True,separators=(',',':'))

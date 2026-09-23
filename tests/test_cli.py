@@ -59,3 +59,36 @@ def test_cli_targets_and_dry_run_validation(tmp_path):
 
     val_ig = run_cli(tmp_path, 'target', 'validate', '--platform', 'instagram', '--destination', '178414')
     assert val_ig['platform'] == 'instagram'
+
+
+def test_cli_a2a_and_report_commands(tmp_path):
+    run_cli(tmp_path, 'init')
+    media = tmp_path / 'test.png'
+    media.write_bytes(b'\x89PNG\r\n\x1a\ncli-png')
+
+    bad_manifest = tmp_path / 'bad_manifest.json'
+    bad_manifest.write_text(json.dumps({'task_id': '', 'agent': ''}))
+
+    env = {**os.environ, 'PYTHONPATH': 'src'}
+    res = subprocess.run(
+        [sys.executable, '-m', 'durable_media.cli', '--workspace', str(tmp_path), 'a2a', 'validate', str(bad_manifest)],
+        cwd=os.path.dirname(os.path.dirname(__file__)),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode != 0
+
+    good_manifest = tmp_path / 'good_manifest.json'
+    good_manifest.write_text(json.dumps({
+        'task_id': 'task-cli-good',
+        'agent': 'cli-agent',
+        'project': 'cli-proj',
+        'artifacts': [{'path': 'test.png'}]
+    }))
+
+    val = run_cli(tmp_path, 'a2a', 'validate', str(good_manifest))
+    assert val['status'] == 'valid'
+
+    rep = run_cli(tmp_path, 'report', 'nightly')
+    assert rep['report_type'] == 'nightly_operational_report'

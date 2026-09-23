@@ -29,6 +29,19 @@ def main(argv=None):
  x=sub.add_parser('asset'); x.add_argument('action',choices=['show','lineage']); x.add_argument('asset')
  sub.add_parser('targets')
  x=sub.add_parser('target'); x.add_argument('action',choices=['list','validate']); x.add_argument('--platform',choices=['instagram','linkedin','youtube','discord','fake']); x.add_argument('--destination')
+ a2a_p=sub.add_parser('a2a'); a2a_sub=a2a_p.add_subparsers(dest='a2a_cmd',required=True)
+ x=a2a_sub.add_parser('ingest'); x.add_argument('manifest'); x.add_argument('--project')
+ x=a2a_sub.add_parser('validate'); x.add_argument('manifest')
+ hermes_p=sub.add_parser('hermes'); hermes_sub=hermes_p.add_subparsers(dest='hermes_cmd',required=True)
+ x=hermes_sub.add_parser('preview'); x.add_argument('job')
+ x=hermes_sub.add_parser('approve'); x.add_argument('job'); x.add_argument('--actor',required=True); x.add_argument('--fingerprint',required=True)
+ x=hermes_sub.add_parser('publish'); x.add_argument('job'); x.add_argument('--dry-run',action='store_true')
+ x=hermes_sub.add_parser('status'); x.add_argument('job')
+ x=hermes_sub.add_parser('ingest'); x.add_argument('manifest'); x.add_argument('--project')
+ rep_p=sub.add_parser('report'); rep_sub=rep_p.add_subparsers(dest='report_cmd',required=True)
+ x=rep_sub.add_parser('nightly'); x.add_argument('--since'); x.add_argument('--output'); x.add_argument('--format',choices=['json','markdown'],default='json')
+ obs_p=sub.add_parser('obsidian'); obs_sub=obs_p.add_subparsers(dest='obsidian_cmd',required=True)
+ x=obs_sub.add_parser('daily'); x.add_argument('--date'); x.add_argument('--vault-dir')
  a=p.parse_args(argv); cfg=WorkspaceConfig(a.workspace).ensure(); r=Registry(cfg.db_path)
 
  if a.cmd=='init': out={'workspace':str(cfg.root),'db':str(cfg.db_path)}
@@ -64,5 +77,37 @@ def main(argv=None):
   else:
    if not a.platform: raise ValueError('--platform is required for target validate')
    out=validate_target_config(a.platform,a.destination)
+ elif a.cmd=='a2a':
+  from pathlib import Path
+  p_man=Path(a.manifest); mf_path=cfg.safe(p_man if p_man.is_absolute() else cfg.root/p_man)
+  if a.a2a_cmd=='validate':
+   from .a2a_manifest import A2AManifest
+   mf=A2AManifest.load(mf_path); out={'status':'valid','manifest':mf.to_dict()}
+  elif a.a2a_cmd=='ingest':
+   from .a2a_ingest import ingest_a2a_manifest
+   out=ingest_a2a_manifest(cfg,r,mf_path,project=a.project)
+ elif a.cmd=='hermes':
+  from .hermes import hermes_preview,hermes_approve,hermes_publish,hermes_status,hermes_ingest
+  if a.hermes_cmd=='preview': out=hermes_preview(r,a.job,cfg=cfg)
+  elif a.hermes_cmd=='approve': out=hermes_approve(r,a.job,a.actor,a.fingerprint,cfg=cfg)
+  elif a.hermes_cmd=='publish': out=hermes_publish(cfg,r,a.job,dry_run=a.dry_run)
+  elif a.hermes_cmd=='status': out=hermes_status(r,a.job,cfg=cfg)
+  elif a.hermes_cmd=='ingest':
+   from pathlib import Path
+   p_man=Path(a.manifest); mf_path=cfg.safe(p_man if p_man.is_absolute() else cfg.root/p_man)
+   out=hermes_ingest(cfg,r,mf_path,project=a.project)
+ elif a.cmd=='report':
+  from .reports import generate_nightly_report,write_nightly_report,report_to_markdown
+  if a.report_cmd=='nightly':
+   rep,path_written=write_nightly_report(cfg,r,output_path=a.output,since=a.since,output_format=a.format)
+   if a.output: out={'report_type':'nightly_operational_report','output_path':str(path_written),'format':a.format,'summary':rep['summary']}
+   else:
+    if a.format=='markdown': print(report_to_markdown(rep)); return 0
+    out=rep
+ elif a.cmd=='obsidian':
+  from .obsidian_links import write_daily_note
+  if a.obsidian_cmd=='daily':
+   written=write_daily_note(cfg,r,date_str=a.date,vault_dir=a.vault_dir); out={'status':'success','daily_note_path':str(written)}
+
  print(json.dumps(out,default=lambda x:x.to_dict() if hasattr(x,'to_dict') else str(x),sort_keys=True,indent=2)); return 0
 if __name__=='__main__': main()
