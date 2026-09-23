@@ -24,4 +24,39 @@ Publishing is persisted in SQLite. Jobs move through `awaiting_approval -> appro
 
 Use `preview JOB` or `status JOB` to inspect the complete payload, approval, transitions, retry schedule, and verified receipt. `publish JOB --dry-run` validates and previews without invoking an adapter or creating a receipt. Reconcile an unknown result explicitly: `reconcile JOB --outcome published --operator NAME --reason "verified in provider UI"` (the outcomes are `published`, `not-published`, and `retry`). `failures --since ISO_TIMESTAMP` lists persisted failures and unknown remote jobs.
 
-The `FakePublisher` is deterministic and offline: `FakePublisher(mode="success")` supports `timeout`, `rate_limit`, `5xx`, `auth`, `validation`, `malformed`, and `unknown` outcomes, and `outcomes=[...]` sequences them while exposing `uploads` and `calls` for integration tests. Real platform adapters and credentials are intentionally out of scope.
+The `FakePublisher` is deterministic and offline: `FakePublisher(mode="success")` supports `timeout`, `rate_limit`, `5xx`, `auth`, `validation`, `malformed`, and `unknown` outcomes, and `outcomes=[...]` sequences them while exposing `uploads` and `calls` for integration tests.
+
+## Phase 4 Platform Adapters
+
+Phase 4 introduces isolated platform adapters implementing the common `Publisher` protocol:
+
+- **Instagram (`InstagramPublisher`)**: Implements Meta Graph API Reels and video container creation, media upload, bounded processing-status polling (`FINISHED`, `IN_PROGRESS`, `ERROR`, `EXPIRED`), publishing, and permalink verification (`https://www.instagram.com/reel/{media_id}/`). Preserves container ID, media ID, status, and permalink.
+- **LinkedIn (`LinkedInPublisher`)**: Implements LinkedIn Community Management / Posts API with separated text-only and media flows (images and videos). Handles asset registration (`initializeUpload`), binary upload, video readiness polling (`AVAILABLE`), post creation, and verification (`https://www.linkedin.com/feed/update/{post_urn}`). Rejects unsupported content combinations (such as audio-only uploads) before upload.
+- **YouTube (`YouTubePublisher`)**: Implements YouTube Data API v3 resumable video uploads with multi-chunk transfer, `308 Resume Incomplete` handling, resume inquiry, video processing polling, thumbnail attachment, and watch URL verification (`https://www.youtube.com/watch?v={video_id}`). Preserves session URLs and video IDs without logging credentials.
+- **Discord (`DiscordPublisher`)**: Implements webhook or bot-based channel message and attachment delivery with channel validation and message verification (`https://discord.com/channels/{guild_id}/{channel_id}/{message_id}`). Delivery receipts explicitly document ephemeral channel retention limits (`permanence: ephemeral_channel_retention`).
+
+### Security & Secret References
+
+All adapter credentials use `SecretRef` objects rather than raw tokens:
+- Environment variable references: `INSTAGRAM_ACCESS_TOKEN`, `LINKEDIN_ACCESS_TOKEN`, `YOUTUBE_ACCESS_TOKEN`, `DISCORD_BOT_TOKEN`, `DISCORD_WEBHOOK_URL`.
+- File path references: credential files (e.g. `/root/.hermes/secrets/`) with restrictive permissions.
+- Redaction guarantee: tokens are never printed in `repr()`, string representations, logs, manifests, SQLite transitions, or exception messages.
+
+### CLI Target Inspection & Validation
+
+```bash
+# List supported platforms and their configuration readiness
+media-pipeline targets
+
+# Validate a target adapter configuration without network calls
+media-pipeline target validate --platform instagram --destination 17841400000000000
+media-pipeline target validate --platform linkedin --destination urn:li:person:12345
+media-pipeline target validate --platform youtube
+media-pipeline target validate --platform discord --destination 123456789012345678
+```
+
+### Offline Testing & Transports
+
+All adapters accept an injectable `HttpTransport`. The test suite uses `FakeHttpTransport` exclusively:
+- Zero external network calls are made during test execution.
+- Tests deterministically simulate upload chunking, 308 resumes, polling delays, rate limits (HTTP 429), timeouts (HTTP 408/504), server errors (5xx), authentication failures (401/403), validation errors (400/422), malformed responses, and receipt verifications.

@@ -45,14 +45,18 @@ def publish(cfg,reg,jid,adapter=None,dry_run=False,actor='system'):
  if j['state'] not in ('approved','failed_retryable'):
   if j['state']=='published': return dict(reg.receipt(j['idempotency_key']) or j)
   raise ValueError('approval required')
- adapter=adapter or FakePublisher()
+ if adapter is None:
+  from .adapters.registry import get_publisher
+  adapter = FakePublisher() if j['platform'] == 'fake' else get_publisher(j['platform'], destination=j['destination'])
  attempt=int(j['attempt_count'] or 0)+1
  try:
   reg.transition(jid,'queued',actor=actor,reason='publish attempt',attempt=attempt)
   reg.transition(jid,'uploading',actor=actor,reason='upload',attempt=attempt)
   d=reg.derivative(j['derivative_id']); result=adapter.publish_job(dict(reg.job(jid)),str(cfg.root/d['path']))
+  if hasattr(result, 'to_dict'): result = result.to_dict()
   if not isinstance(result,dict) or not result.get('external_id') or not result.get('url') or not result.get('verified'):
    raise MalformedResponseError('malformed response')
+
   reg.transition(jid,'processing',actor=actor,reason='remote processing',metadata=result,attempt=attempt)
   reg.transition(jid,'publishing',actor=actor,reason='remote publish',metadata=result,attempt=attempt)
   reg.transition(jid,'verifying',actor=actor,reason='verify receipt',metadata=result,attempt=attempt)

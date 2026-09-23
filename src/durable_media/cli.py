@@ -27,7 +27,10 @@ def main(argv=None):
  x=sub.add_parser('reconcile'); x.add_argument('job'); x.add_argument('--outcome',choices=['published','not-published','retry']); x.add_argument('--operator'); x.add_argument('--reason')
  x=sub.add_parser('failures'); x.add_argument('--since')
  x=sub.add_parser('asset'); x.add_argument('action',choices=['show','lineage']); x.add_argument('asset')
+ sub.add_parser('targets')
+ x=sub.add_parser('target'); x.add_argument('action',choices=['list','validate']); x.add_argument('--platform',choices=['instagram','linkedin','youtube','discord','fake']); x.add_argument('--destination')
  a=p.parse_args(argv); cfg=WorkspaceConfig(a.workspace).ensure(); r=Registry(cfg.db_path)
+
  if a.cmd=='init': out={'workspace':str(cfg.root),'db':str(cfg.db_path)}
  elif a.cmd=='ingest': out=dict(ingest(cfg,r,a.file,a.project,a.role,a.source,a.source_task,a.prompt))
  elif a.cmd=='derive': out=dict(derive(cfg,r,a.asset,a.profile))
@@ -53,5 +56,13 @@ def main(argv=None):
   query="SELECT * FROM jobs WHERE state LIKE 'failed%' OR state='unknown_remote'"; args=[]
   if a.since: query += ' AND created_at >= ?'; args.append(a.since)
   out=[dict(x) for x in r.conn.execute(query,args)]
+ elif a.cmd=='targets':
+  from .adapters.registry import list_targets; out=list_targets()
+ elif a.cmd=='target':
+  from .adapters.registry import list_targets,validate_target_config
+  if a.action=='list': out=list_targets()
+  else:
+   if not a.platform: raise ValueError('--platform is required for target validate')
+   out=validate_target_config(a.platform,a.destination)
  print(json.dumps(out,default=lambda x:x.to_dict() if hasattr(x,'to_dict') else str(x),sort_keys=True,indent=2)); return 0
 if __name__=='__main__': main()

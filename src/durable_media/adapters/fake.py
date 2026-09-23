@@ -22,3 +22,4 @@ class FakePublisher:
  def wait_until_ready(self,remote): self.calls.append('wait_until_ready'); return remote
  def publish(self,remote,job): self.calls.append('publish'); return self.publish_job(job,'')
  def verify(self,result): self.calls.append('verify'); return bool(result.get('verified'))
+ def rollback_or_cleanup(self,remote): self.calls.append('rollback_or_cleanup')

@@ -45,3 +45,17 @@ def test_cli_preview_approve_publish_is_idempotent(tmp_path):
     second = run_cli(tmp_path, 'publish', job['job_id'])
     assert first['receipt_id'] == second['receipt_id']
     assert first['external_id'] == second['external_id']
+
+
+def test_cli_targets_and_dry_run_validation(tmp_path):
+    run_cli(tmp_path, 'init')
+    targets = run_cli(tmp_path, 'targets')
+    assert isinstance(targets, list)
+    platforms = {t['platform'] for t in targets}
+    assert {'instagram', 'linkedin', 'youtube', 'discord', 'fake'} <= platforms
+
+    val = run_cli(tmp_path, 'target', 'validate', '--platform', 'fake')
+    assert val['status'] == 'valid'
+
+    val_ig = run_cli(tmp_path, 'target', 'validate', '--platform', 'instagram', '--destination', '178414')
+    assert val_ig['platform'] == 'instagram'
