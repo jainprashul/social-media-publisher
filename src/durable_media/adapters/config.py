@@ -6,6 +6,7 @@ or audit manifests. Defines platform-specific endpoint and timeout configuration
 """
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,10 +28,12 @@ class SecretRef:
         env: str | None = None,
         file_path: Path | str | None = None,
         value: str | None = None,
+        json_key: str | None = None,
     ):
         self.env = env
         self.file_path = Path(file_path).expanduser() if file_path is not None else None
         self._value = value
+        self.json_key = json_key
 
     @classmethod
     def from_env(cls, env_var: str) -> SecretRef:
@@ -41,6 +44,11 @@ class SecretRef:
     def from_file(cls, path: Path | str) -> SecretRef:
         """Create reference to a secret file on disk."""
         return cls(file_path=path)
+
+    @classmethod
+    def from_json_file(cls, path: Path | str, key: str) -> SecretRef:
+        """Reference one secret field in an existing JSON credential file."""
+        return cls(file_path=path, json_key=key)
 
     @classmethod
     def from_value(cls, val: str) -> SecretRef:
@@ -63,7 +71,16 @@ class SecretRef:
         if self.file_path:
             if not self.file_path.is_file():
                 raise AuthenticationError(f"Required secret file '{self.file_path}' does not exist")
-            return self.file_path.read_text(encoding="utf-8").strip()
+            content = self.file_path.read_text(encoding="utf-8").strip()
+            if self.json_key:
+                try:
+                    value = json.loads(content).get(self.json_key)
+                except (json.JSONDecodeError, AttributeError) as exc:
+                    raise AuthenticationError("Configured credential file is not valid JSON") from exc
+                if not value:
+                    raise AuthenticationError(f"Credential field '{self.json_key}' is missing")
+                return str(value)
+            return content
         raise AuthenticationError("No secret reference configured")
 
     def is_configured(self) -> bool:
@@ -72,14 +89,20 @@ class SecretRef:
         if self.env and bool(os.environ.get(self.env)):
             return True
         if self.file_path and self.file_path.is_file():
-            return True
+            if not self.json_key:
+                return True
+            try:
+                return bool(json.loads(self.file_path.read_text(encoding="utf-8")).get(self.json_key))
+            except (OSError, json.JSONDecodeError, AttributeError):
+                return False
         return False
 
     def __repr__(self) -> str:
         if self.env:
             return f"SecretRef(env={self.env!r})"
         if self.file_path:
-            return f"SecretRef(file_path={str(self.file_path)!r})"
+            suffix = f", key={self.json_key!r}" if self.json_key else ""
+            return f"SecretRef(file_path={str(self.file_path)!r}{suffix})"
         if self._value:
             return "SecretRef(value='[REDACTED]')"
         return "SecretRef(empty)"
@@ -92,7 +115,7 @@ class SecretRef:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "source": "env" if self.env else ("file" if self.file_path else ("value" if self._value else "none")),
+            "source": "env" if self.env else ("json_file" if self.json_key else ("file" if self.file_path else ("value" if self._value else "none"))),
             "reference": self.env or (str(self.file_path) if self.file_path else None),
             "configured": self.is_configured(),
         }
@@ -101,12 +124,21 @@ class SecretRef:
 @dataclass
 class InstagramConfig:
     account_id: str = ""
-    access_token: SecretRef = field(default_factory=lambda: SecretRef(env="INSTAGRAM_ACCESS_TOKEN"))
+    access_token: SecretRef = field(default_factory=lambda: SecretRef(env="INSTAGRAM_ACCESS_TOKEN", file_path="/root/.hermes/secrets/instagram.json", json_key="access_token"))
     api_version: str = "v21.0"
     base_url: str = "https://graph.facebook.com"
     timeout: float = 30.0
     max_poll_attempts: int = 10
     poll_interval: float = 0.0
+
+    def __post_init__(self):
+        """Reuse the existing Hermes account identifier when available."""
+        if not self.account_id:
+            try:
+                data = json.loads(Path("/root/.hermes/secrets/instagram.json").read_text(encoding="utf-8"))
+                self.account_id = str(data.get("instagram_account_id", ""))
+            except (OSError, json.JSONDecodeError, AttributeError):
+                pass
 
     def is_configured(self) -> bool:
         return bool(self.account_id) and self.access_token.is_configured()
@@ -132,13 +164,28 @@ class InstagramConfig:
 
 @dataclass
 class LinkedInConfig:
-    author_urn: str = ""
-    access_token: SecretRef = field(default_factory=lambda: SecretRef(env="LINKEDIN_ACCESS_TOKEN"))
+    author_urn: str | None = None
+    access_token: SecretRef = field(default_factory=lambda: SecretRef(env="LINKEDIN_ACCESS_TOKEN", file_path="/root/.hermes/secrets/linkedin.json", json_key="access_token"))
     api_version: str = "202401"
     base_url: str = "https://api.linkedin.com"
     timeout: float = 30.0
     max_poll_attempts: int = 10
     poll_interval: float = 0.0
+
+    def __post_init__(self):
+        """Derive the member URN from cached OpenID claims without exposing them."""
+        if self.author_urn is None:
+            try:
+                import base64
+                data = json.loads(Path("/root/.hermes/secrets/linkedin.json").read_text(encoding="utf-8"))
+                token = data.get("id_token", "")
+                encoded = token.split(".")[1]
+                encoded += "=" * (-len(encoded) % 4)
+                subject = json.loads(base64.urlsafe_b64decode(encoded)).get("sub")
+                if subject:
+                    self.author_urn = f"urn:li:person:{subject}"
+            except (OSError, json.JSONDecodeError, IndexError, ValueError, AttributeError, KeyError):
+                pass
 
     def is_configured(self) -> bool:
         return bool(self.author_urn) and self.access_token.is_configured()
@@ -165,7 +212,7 @@ class LinkedInConfig:
 @dataclass
 class YouTubeConfig:
     channel_id: str = ""
-    access_token: SecretRef = field(default_factory=lambda: SecretRef(env="YOUTUBE_ACCESS_TOKEN"))
+    access_token: SecretRef = field(default_factory=lambda: SecretRef(env="YOUTUBE_ACCESS_TOKEN", file_path="/root/.hermes/secrets/youtube.json", json_key="token"))
     base_url: str = "https://www.googleapis.com"
     upload_url: str = "https://www.googleapis.com/upload/youtube/v3/videos"
     chunk_size_bytes: int = 1024 * 1024
