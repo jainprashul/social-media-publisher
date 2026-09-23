@@ -246,3 +246,15 @@ class InstagramPublisher(BasePublisher):
         except Exception:
             # Cleanup is best-effort and must not mask the primary error
             pass
+
+    def _check_readiness_live(self, timeout: float = 5.0) -> dict[str, Any]:
+        token = self.config.access_token.resolve()
+        if not token:
+            return {"status": "unconfigured", "live": True, "error_class": "ValidationError"}
+        try:
+            url = self._url("me?fields=id,name")
+            resp = self.transport.request("GET", url, headers=self._auth_headers(), timeout=timeout)
+            raise_for_status(resp, context="Instagram live readiness check")
+            return {"status": "ok", "live": True, "error_class": None}
+        except Exception as err:
+            return {"status": "error", "live": True, "error_class": err.__class__.__name__}

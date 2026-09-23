@@ -198,3 +198,20 @@ class DiscordPublisher(BasePublisher):
             )
         except Exception:
             pass
+
+    def _check_readiness_live(self, timeout: float = 5.0) -> dict[str, Any]:
+        has_bot = self.config.bot_token.is_configured()
+        has_webhook = self.config.webhook_url.is_configured()
+        if not has_bot and not has_webhook:
+            return {"status": "unconfigured", "live": True, "error_class": "ValidationError"}
+        try:
+            if has_bot:
+                url = self._url("users/@me")
+                resp = self.transport.request("GET", url, headers=self._auth_headers(), timeout=timeout)
+            else:
+                url = self.config.webhook_url.resolve()
+                resp = self.transport.request("GET", url, timeout=timeout)
+            raise_for_status(resp, context="Discord live readiness check")
+            return {"status": "ok", "live": True, "error_class": None}
+        except Exception as err:
+            return {"status": "error", "live": True, "error_class": err.__class__.__name__}

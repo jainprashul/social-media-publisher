@@ -357,3 +357,16 @@ class YouTubePublisher(BasePublisher):
             )
         except Exception:
             pass
+
+    def _check_readiness_live(self, timeout: float = 5.0) -> dict[str, Any]:
+        token = self.config.access_token.resolve()
+        if not token:
+            return {"status": "unconfigured", "live": True, "error_class": "ValidationError"}
+        try:
+            clean_base = self.config.base_url.rstrip("/")
+            url = f"{clean_base}/youtube/v3/channels?part=id&mine=true"
+            resp = self.transport.request("GET", url, headers=self._auth_headers(), timeout=timeout)
+            raise_for_status(resp, context="YouTube live readiness check")
+            return {"status": "ok", "live": True, "error_class": None}
+        except Exception as err:
+            return {"status": "error", "live": True, "error_class": err.__class__.__name__}

@@ -176,8 +176,109 @@ media-pipeline report nightly --since 2026-09-22T00:00:00Z --output reports/nigh
 - **Redaction:** Secrets (tokens, authorization headers, passwords, cookies, signed URL parameters like `x-amz-signature` or `token`) are automatically redacted before disk persistence or CLI display.
 - **Local confinement:** Ingestion, derivatives, and reports are strictly confined within the configured workspace.
 
+## Phase 6 Production Hardening
+
+Phase 6 hardens the pipeline into an operable local service with reproducible packaging, CI quality gates, consistent database snapshots with checksums, operational diagnostics (`doctor`), opt-in live provider verification, scheduler-safe nightly reports, and bounded operational log rotation.
+
+### 1. Packaging & Build Gates
+
+- **Editable and Wheel Installations:** Package is configured via `pyproject.toml` using `setuptools.build_meta` with `durable_media` package discovery and CLI entry point `media-pipeline`.
+- **Supported Python Versions:** Declared `>=3.11` (tested against Python 3.11 and 3.12).
+- **Distribution Hygiene:** `MANIFEST.in` explicitly excludes runtime state (`data/`, `manifests/`, `projects/`, `*.sqlite3*`) and sensitive files (`.env*`, `*.key`, `*.pem`, `id_rsa*`).
+- **Build Verification:**
+  ```bash
+  python -m pip install -e .
+  python -m build
+  ```
+
+### 2. CI Quality Gates (`.github/workflows/ci.yml`)
+
+The CI workflow automates multi-stage verification on every push and pull request:
+- Multi-version matrix: Python 3.11 & 3.12 on Ubuntu Linux.
+- Bytecode compile validation: `python -m compileall -q src tests`.
+- Whitespace and diff hygiene: `git diff --check`.
+- Secret and artifact hygiene scan: `scan_package` rejects committed `.env`, private keys, or SQLite databases.
+- Offline pytest suite execution: 100% deterministic with zero external network access.
+- Opt-in live provider checks: Run only when `DURABLE_MEDIA_ALLOW_LIVE_CHECKS=1` is explicitly set in the workflow environment.
+
+### 3. SQLite Backup and Safe Recovery
+
+Database snapshots use SQLite's online backup API (`sqlite3.Connection.backup`) to guarantee consistent point-in-time state without locking out readers:
+- **Sidecar SHA-256 generation:** Every backup produces a matching `<backup>.sha256` checksum sidecar.
+- **Verification gate:** Checks file existence, checksum match, SQLite `PRAGMA integrity_check` / `quick_check`, and schema completeness.
+- **Safe overwrite protection:** Restoring to an existing non-empty target database is refused unless `--force` is provided. Restores are performed atomically via a temporary file.
+
+```bash
+# Create an online SQLite backup snapshot with SHA-256 sidecar
+media-pipeline backup create
+
+# Create backup to a designated destination
+media-pipeline backup create --output backups/registry_snapshot.sqlite3
+
+# Verify backup integrity, checksum, and schema compatibility
+media-pipeline backup verify backups/registry_snapshot.sqlite3
+
+# Safely restore backup (requires --force if target already exists and is non-empty)
+media-pipeline backup restore backups/registry_snapshot.sqlite3 --target-db data/registry.sqlite3 --force
+```
+
+### 4. Operational Diagnostics (`doctor`)
+
+The `doctor` command inspects the host environment, workspace permissions, database integrity, schema migrations, profiles, adapter configuration readiness, and secret references without exposing sensitive values:
+
+```bash
+# Run local diagnostics (offline, safe for scripts and dashboards)
+media-pipeline doctor
+```
+
+- **Output Structure:** Machine-readable JSON reporting `overall_status` (`healthy`, `warning`, `error`), Python environment, tool paths/versions (`ffmpeg`, `ffprobe`), workspace directory permissions, database counts and migration status, and adapter credential presence.
+- **Secret Redaction:** Variable names and presence are reported (`source: env` or `source: missing`), but actual tokens or passwords are never displayed.
+
+### 5. Provider Readiness & Opt-In Live Checks
+
+- **Dry-run validation by default:** `media-pipeline target validate` operates purely offline, validating credential presence and target formatting with zero network calls.
+- **Live check gate:** Live probes against external APIs require both the `--live` flag and the environment variable `DURABLE_MEDIA_ALLOW_LIVE_CHECKS=1`. If the environment flag is missing, checks return `status: gated` and do not attempt network access.
+- **Bounded timeouts & safe errors:** Live probes use a default 5-second timeout and report only `status` and `error_class` (e.g. `AuthenticationError`, `RateLimitError`), never sensitive payloads.
+
+```bash
+# Dry-run validation (default, offline)
+media-pipeline target validate --platform instagram --destination 17841400000000000
+
+# Opt-in live connectivity verification
+export DURABLE_MEDIA_ALLOW_LIVE_CHECKS=1
+media-pipeline target validate --platform instagram --destination 17841400000000000 --live
+media-pipeline doctor --live
+```
+
+### 6. Scheduler-Safe Nightly Reporting
+
+Nightly reporting is engineered for unattended execution via external cron or systemd timers:
+- **Advisory file locking:** Uses `FileLock` (`fcntl.flock`) on `data/locks/nightly_report.lock` to prevent overlapping runs.
+- **Atomic replacement:** Writes reports to `.tmp.<pid>` before renaming into place (`os.replace`).
+- **Human note protection:** Refuses to overwrite non-AI-owned Markdown notes.
+- **Retention pruning:** Safely cleans older AI-owned reports according to `--retention-days`.
+
+```bash
+# Execute scheduled report with locking and atomic write
+media-pipeline report nightly --output data/reports/nightly.md --format markdown --lock-timeout 10
+
+# Crontab entry example (runs daily at 01:00 UTC)
+# 0 1 * * * /usr/local/bin/media-pipeline --workspace /home/X/Playground/durable-media-publishing report nightly --output /home/X/Playground/durable-media-publishing/data/reports/nightly.md --format markdown >> /home/X/Playground/durable-media-publishing/data/logs/cron.log 2>&1
+```
+
+### 7. Bounded Operational Log Rotation
+
+Structured operational events in `data/logs/events.jsonl` are size-bounded and strictly sanitized:
+- **`JsonLogger` rotation:** Automatically rotates logs when reaching `max_bytes` (default 1 MB) keeping up to `backup_count` (default 5) archives (`.1`, `.2`, etc.).
+- **Proactive redaction:** Bearer tokens, query parameters (`signature`, `token`), and credential headers are redacted before calculating size or persisting bytes.
+- **Log inspection CLI:**
+  ```bash
+  media-pipeline logs inspect --limit 20
+  ```
+
 ### Limitations
 
 - Peer discovery and live A2A network protocols are deliberately not invoked in local execution; manifests are consumed locally.
 - Approval fingerprints require exact matching; modifying destination, caption, schedule, or media file invalidates existing approval.
 - Human-authored Obsidian notes cannot be appended to or merged into without an explicit AI-owned header.
+- External provider sandbox/live checks require `DURABLE_MEDIA_ALLOW_LIVE_CHECKS=1` and live credentials configured outside source code.

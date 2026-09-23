@@ -23,3 +23,12 @@ class FakePublisher:
  def publish(self,remote,job): self.calls.append('publish'); return self.publish_job(job,'')
  def verify(self,result): self.calls.append('verify'); return bool(result.get('verified'))
  def rollback_or_cleanup(self,remote): self.calls.append('rollback_or_cleanup')
+ def check_readiness(self, live=False, timeout=5.0):
+  self.calls.append('check_readiness')
+  if not live: return {'status':'ready','live':False,'error_class':None}
+  from .base import is_live_allowed
+  if not is_live_allowed():
+   return {'status':'gated','live':True,'error_class':'LiveChecksDisabledError','message':'Live checks require DURABLE_MEDIA_ALLOW_LIVE_CHECKS=1 environment variable'}
+  mode=self._mode()
+  if mode in _ERRORS: return {'status':'error','live':True,'error_class':_ERRORS[mode].__name__}
+  return {'status':'ok','live':True,'error_class':None}

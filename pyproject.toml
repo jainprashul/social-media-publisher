@@ -1,12 +1,36 @@
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
+
 [project]
 name = "durable-media-publishing"
 version = "0.1.0"
+description = "Production-hardened durable media generation, provenance, and cross-platform publishing pipeline"
+readme = "README.md"
 requires-python = ">=3.11"
+authors = [
+    { name = "Prashul / Hermes Agent" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Multimedia :: Video",
+]
 dependencies = []
+
 [project.scripts]
 media-pipeline = "durable_media.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["durable_media*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]

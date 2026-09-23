@@ -10,6 +10,13 @@ class AuthenticationError(AdapterError): error_class='authentication'
 class ValidationError(AdapterError): error_class='validation'
 class MalformedResponseError(AdapterError): error_class='malformed_response'
 class UnknownRemoteStateError(AdapterError): error_class='unknown_remote'
+class LiveChecksDisabledError(AdapterError): error_class='live_checks_disabled'
+
+def is_live_allowed() -> bool:
+    import os
+    val = os.environ.get("DURABLE_MEDIA_ALLOW_LIVE_CHECKS", "").strip().lower()
+    return val in ("1", "true", "yes")
+
 
 @dataclass(frozen=True)
 class AdapterResult:
@@ -98,3 +105,27 @@ class BasePublisher:
             except Exception:
                 pass
             raise
+
+    def check_readiness(self, live: bool = False, timeout: float = 5.0) -> dict:
+        """Perform dry-run or opt-in live readiness check."""
+        if not live:
+            return self._check_readiness_dry_run()
+        if not is_live_allowed():
+            return {
+                "status": "gated",
+                "live": True,
+                "error_class": "LiveChecksDisabledError",
+                "message": "Live checks require DURABLE_MEDIA_ALLOW_LIVE_CHECKS=1 environment variable",
+            }
+        return self._check_readiness_live(timeout=timeout)
+
+    def _check_readiness_dry_run(self) -> dict:
+        try:
+            target = getattr(self.config, "account_id", None) or getattr(self.config, "author_urn", None) or getattr(self.config, "channel_id", None) or ""
+            self.validate_target(target)
+            return {"status": "ready", "live": False, "error_class": None}
+        except Exception as e:
+            return {"status": "unconfigured", "live": False, "error_class": e.__class__.__name__}
+
+    def _check_readiness_live(self, timeout: float = 5.0) -> dict:
+        return {"status": "ready", "live": True, "error_class": None}

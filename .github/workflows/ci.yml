@@ -1,0 +1,101 @@
+name: CI Quality Gates
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  quality-and-offline-tests:
+    name: Offline Quality Matrix (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system dependencies (FFmpeg)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python build tools and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest build
+
+      - name: Verify compilation
+        run: python -m compileall -q src tests
+
+      - name: Check git diff hygiene
+        run: git diff --check
+
+      - name: Security and generated-file hygiene scan
+        run: |
+          python -c "
+          from pathlib import Path
+          from durable_media.observability import scan_package
+          bad = scan_package(Path('.'))
+          if bad:
+              print('Disallowed files detected:')
+              for b in bad:
+                  print(f'  - {b}')
+              raise SystemExit(1)
+          print('Security and file scan passed: 0 disallowed files.')
+          "
+
+      - name: Install package in editable mode
+        run: python -m pip install -e .
+
+      - name: Verify CLI entry points
+        run: |
+          media-pipeline --help
+          media-pipeline doctor --help
+          media-pipeline backup --help
+          media-pipeline report nightly --help
+
+      - name: Run offline test suite
+        run: pytest -q
+
+      - name: Verify package build
+        run: python -m build
+
+  live-provider-checks:
+    name: Opt-in Live Provider Verification
+    runs-on: ubuntu-latest
+    if: env.DURABLE_MEDIA_ALLOW_LIVE_CHECKS == '1'
+    env:
+      DURABLE_MEDIA_ALLOW_LIVE_CHECKS: ${{ secrets.DURABLE_MEDIA_ALLOW_LIVE_CHECKS }}
+      INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+      LINKEDIN_ACCESS_TOKEN: ${{ secrets.LINKEDIN_ACCESS_TOKEN }}
+      YOUTUBE_ACCESS_TOKEN: ${{ secrets.YOUTUBE_ACCESS_TOKEN }}
+      DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Run gated live provider checks
+        run: |
+          media-pipeline doctor --live

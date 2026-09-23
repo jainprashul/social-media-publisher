@@ -1,0 +1,6 @@
+include README.md pyproject.toml DURABLE_MEDIA_PUBLISHING_SPEC.md PHASE_*.md IMPLEMENTATION_PLAN.md RELEASE_CHECKLIST.md
+recursive-include src/durable_media *.py
+recursive-exclude data *
+recursive-exclude manifests *
+recursive-exclude projects *
+global-exclude *.py[cod] __pycache__ *.so *.dylib *.sqlite3* .env* id_rsa* *.key *.pem

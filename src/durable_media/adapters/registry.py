@@ -52,14 +52,20 @@ def get_publisher(
     raise ValueError(f"Unsupported publisher platform: '{platform}'")
 
 
-def list_targets() -> list[dict[str, Any]]:
+def list_targets(
+    live: bool = False,
+    transport: HttpTransport | None = None,
+    timeout: float = 5.0,
+) -> list[dict[str, Any]]:
     """List all supported platform targets and their credential readiness without revealing secrets."""
+    from .base import is_live_allowed
+
     ig_cfg = InstagramConfig()
     li_cfg = LinkedInConfig()
     yt_cfg = YouTubeConfig()
     dc_cfg = DiscordConfig()
 
-    return [
+    targets = [
         {
             "platform": "instagram",
             "capabilities": PLATFORM_CAPABILITIES.get("instagram", []),
@@ -98,65 +104,148 @@ def list_targets() -> list[dict[str, Any]]:
         },
     ]
 
+    if live:
+        for t in targets:
+            plat = t["platform"]
+            if not is_live_allowed():
+                t["live_readiness"] = {
+                    "status": "gated",
+                    "live": True,
+                    "error_class": "LiveChecksDisabledError",
+                    "message": "Live checks require DURABLE_MEDIA_ALLOW_LIVE_CHECKS=1 environment variable",
+                }
+            elif not t["configured"]:
+                t["live_readiness"] = {
+                    "status": "unconfigured",
+                    "live": True,
+                    "error_class": "MissingConfigurationError",
+                }
+            else:
+                try:
+                    pub = get_publisher(plat, transport=transport)
+                    t["live_readiness"] = pub.check_readiness(live=True, timeout=timeout)
+                except Exception as err:
+                    t["live_readiness"] = {
+                        "status": "error",
+                        "live": True,
+                        "error_class": err.__class__.__name__,
+                    }
 
-def validate_target_config(platform: str, destination: str | None = None) -> dict[str, Any]:
-    """Dry-run validate a platform target configuration without network access."""
+    return targets
+
+
+def validate_target_config(
+    platform: str,
+    destination: str | None = None,
+    live: bool = False,
+    transport: HttpTransport | None = None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Validate a platform target configuration; offline dry-run by default, opt-in live check."""
+    from .base import is_live_allowed
+
     plat = platform.lower()
-    if plat == "fake":
-        return {"platform": "fake", "status": "valid", "destination": destination}
+    if plat not in ("fake", "instagram", "linkedin", "youtube", "discord"):
+        raise ValueError(f"Unknown platform '{platform}'")
 
-    if plat == "instagram":
-        cfg = InstagramConfig(account_id=destination or "")
-        issues = []
-        if not destination and not cfg.account_id:
-            issues.append("Missing account_id/destination")
-        if not cfg.access_token.is_configured():
-            issues.append(f"Secret '{cfg.access_token.env}' is not configured")
+    if not live:
+        if plat == "fake":
+            return {"platform": "fake", "status": "valid", "destination": destination}
+
+        if plat == "instagram":
+            cfg = InstagramConfig(account_id=destination or "")
+            issues = []
+            if not destination and not cfg.account_id:
+                issues.append("Missing account_id/destination")
+            if not cfg.access_token.is_configured():
+                issues.append(f"Secret '{cfg.access_token.env}' is not configured")
+            return {
+                "platform": "instagram",
+                "status": "valid" if not issues else "invalid",
+                "issues": issues,
+                "config": cfg.to_dict(),
+            }
+
+        if plat == "linkedin":
+            cfg = LinkedInConfig(author_urn=destination or "")
+            issues = []
+            if not destination and not cfg.author_urn:
+                issues.append("Missing author_urn/destination")
+            elif destination and not destination.startswith("urn:li:"):
+                issues.append("Destination must start with 'urn:li:'")
+            if not cfg.access_token.is_configured():
+                issues.append(f"Secret '{cfg.access_token.env}' is not configured")
+            return {
+                "platform": "linkedin",
+                "status": "valid" if not issues else "invalid",
+                "issues": issues,
+                "config": cfg.to_dict(),
+            }
+
+        if plat == "youtube":
+            cfg = YouTubeConfig(channel_id=destination or "")
+            issues = []
+            if not cfg.access_token.is_configured():
+                issues.append(f"Secret '{cfg.access_token.env}' is not configured")
+            return {
+                "platform": "youtube",
+                "status": "valid" if not issues else "invalid",
+                "issues": issues,
+                "config": cfg.to_dict(),
+            }
+
+        if plat == "discord":
+            cfg = DiscordConfig(channel_id=destination or "")
+            issues = []
+            if not cfg.webhook_url.is_configured() and not (cfg.bot_token.is_configured() and destination):
+                issues.append("Requires either DISCORD_WEBHOOK_URL or (DISCORD_BOT_TOKEN and channel_id)")
+            return {
+                "platform": "discord",
+                "status": "valid" if not issues else "invalid",
+                "issues": issues,
+                "config": cfg.to_dict(),
+            }
+
+    # Live check path
+    if not is_live_allowed():
         return {
-            "platform": "instagram",
-            "status": "valid" if not issues else "invalid",
-            "issues": issues,
-            "config": cfg.to_dict(),
+            "platform": plat,
+            "destination": destination,
+            "status": "gated",
+            "live": True,
+            "error_class": "LiveChecksDisabledError",
+            "issues": ["Live checks require DURABLE_MEDIA_ALLOW_LIVE_CHECKS=1 environment variable"],
         }
 
-    if plat == "linkedin":
-        cfg = LinkedInConfig(author_urn=destination or "")
-        issues = []
-        if not destination and not cfg.author_urn:
-            issues.append("Missing author_urn/destination")
-        elif destination and not destination.startswith("urn:li:"):
-            issues.append("Destination must start with 'urn:li:'")
-        if not cfg.access_token.is_configured():
-            issues.append(f"Secret '{cfg.access_token.env}' is not configured")
+    # Dry-run check first
+    dry_run = validate_target_config(plat, destination=destination, live=False)
+    if dry_run.get("status") != "valid":
         return {
-            "platform": "linkedin",
-            "status": "valid" if not issues else "invalid",
-            "issues": issues,
-            "config": cfg.to_dict(),
+            "platform": plat,
+            "destination": destination,
+            "status": "unconfigured",
+            "live": True,
+            "issues": dry_run.get("issues", []),
+            "error_class": "ValidationError",
         }
 
-    if plat == "youtube":
-        cfg = YouTubeConfig(channel_id=destination or "")
-        issues = []
-        if not cfg.access_token.is_configured():
-            issues.append(f"Secret '{cfg.access_token.env}' is not configured")
+    try:
+        pub = get_publisher(plat, destination=destination, transport=transport)
+        res = pub.check_readiness(live=True, timeout=timeout)
         return {
-            "platform": "youtube",
-            "status": "valid" if not issues else "invalid",
-            "issues": issues,
-            "config": cfg.to_dict(),
+            "platform": plat,
+            "destination": destination,
+            "status": res["status"],
+            "live": True,
+            "error_class": res.get("error_class"),
+            "issues": [] if res["status"] == "ok" else [f"Live check returned {res.get('error_class')}"],
         }
-
-    if plat == "discord":
-        cfg = DiscordConfig(channel_id=destination or "")
-        issues = []
-        if not cfg.webhook_url.is_configured() and not (cfg.bot_token.is_configured() and destination):
-            issues.append("Requires either DISCORD_WEBHOOK_URL or (DISCORD_BOT_TOKEN and channel_id)")
+    except Exception as err:
         return {
-            "platform": "discord",
-            "status": "valid" if not issues else "invalid",
-            "issues": issues,
-            "config": cfg.to_dict(),
+            "platform": plat,
+            "destination": destination,
+            "status": "error",
+            "live": True,
+            "error_class": err.__class__.__name__,
+            "issues": [f"Live check failed: {err.__class__.__name__}"],
         }
-
-    raise ValueError(f"Unknown platform '{platform}'")
